@@ -1,0 +1,16 @@
+name: darts
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - numpy
+  - matplotlib
+  - scikit-learn
+  - opencv
+  - pytorch
+  - torchvision
+  - torchinfo
+  - numpy
+  - jupyter
+  - ultralytics
