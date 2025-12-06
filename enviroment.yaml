@@ -14,3 +14,5 @@ dependencies:
   - numpy
   - jupyter
   - ultralytics
+  - pip:
+    - rembg[cpu,cli]
