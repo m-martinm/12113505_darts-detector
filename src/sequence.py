@@ -75,13 +75,7 @@ if __name__ == "__main__":
     board_gray[~board_mask.astype(np.bool)] = 0
     cv2.LUT(board_gray, lut_sqrt, board_gray)
 
-    board_gray[board_gray <= np.quantile(board_gray, 0.8)] = 0
-    board_gray = cv2.dilate(board_gray, np.ones((3, 3)))
-    canny = cv2.Canny(board_gray, 100, 200)
-    
-    utils.display_preview(canny)
-    sys.exit(0)
-    sequence_dir = root / "data/sequence/seq2"
+    sequence_dir = root / "data/sequence/seq3"
     sequence = [imgload(k) for k in sequence_dir.glob("*.jpg")]
 
     bg_color, bg_gray = sequence.pop(0)
@@ -90,8 +84,9 @@ if __name__ == "__main__":
     cv2.normalize(bg_gray, bg_gray, 255, 0, cv2.NORM_MINMAX)
 
     H_board, H_scene = do_sift(board_gray, bg_gray)
-
-    utils.display_preview(bg_gray, board_gray, title="Setup")
+    # print(H_board)
+    # print(H_scene)
+    # utils.display_preview(bg_gray, board_gray, title="Setup")
     while 1:
         try:
             curr_color, curr_gray = sequence.pop(0)
