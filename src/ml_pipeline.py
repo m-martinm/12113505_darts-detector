@@ -85,7 +85,7 @@ class MLDetector:
                     self.maybe_hit[idx, -1] += 1
                     if self.maybe_hit[idx, -1] >= self.min_samples:
                         # Permanent hit
-                        self.confirmed_hits.append(self.maybe_hit[idx, :2])
+                        self.confirmed_hits.append(self.maybe_hit[idx, :2].astype(np.int32))
 
                 elif dist[idx] > 2 * self.eps:
                     if self.hit_count < self.maybe_hit.shape[0]:
