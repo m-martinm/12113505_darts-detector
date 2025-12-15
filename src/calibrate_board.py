@@ -16,11 +16,11 @@ WNAME = "Calibration"
 
 
 def capture() -> np.ndarray:
-    cam, crop = utils.setup_camera()
+    cam = utils.setup_camera()
 
     while True:
         ret, frame = cam.read()
-        frame = crop(frame)
+        frame = utils.center_crop(frame)
         cv2.imshow("Capture", frame)
         k = cv2.waitKey(16)
         if k & 0xFF == 27:
