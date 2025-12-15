@@ -1,9 +1,16 @@
-import math
+import logging
+from pathlib import Path
 from typing import Callable, Iterable, Tuple
 import cv2
 import numpy as np
 
 IMAGE_SIZE = (640, 640)
+gamma = 0.7
+invGamma = 1.0 / gamma
+lut_contrast = np.array(
+    [((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)], dtype=np.uint8
+)
+lut_lift_shadows = np.sqrt(np.arange(256, dtype=np.float32) * 255).astype(np.uint8)
 
 
 def cv2numpy(img: cv2.typing.MatLike) -> np.typing.NDArray[np.float32]:
@@ -24,18 +31,23 @@ def display_preview(
         tmp = numpy2cv(tmp)  # type: ignore
 
     cv2.imshow(title, tmp)
-    cv2.waitKey(0)
+    k = cv2.waitKey(0)
     try:
         cv2.destroyWindow(title)
     except cv2.error:
         pass
+    return k
 
 
 def setup_camera(
-    index: int = 1, backend: int = cv2.CAP_DSHOW
+    index: int = 1, backend: int = cv2.CAP_DSHOW, file: Path | None = None
 ) -> Tuple[cv2.VideoCapture, Callable[[np.ndarray], np.ndarray]]:
-    cam = cv2.VideoCapture(index, backend)
-
+    
+    if file is None:
+        cam = cv2.VideoCapture(index, backend)
+    else:
+        cam = cv2.VideoCapture(str(file))
+    
     if not cam.isOpened():
         raise IOError(f"Cannot open camera with index {index}")
 
@@ -69,13 +81,15 @@ def setup_camera(
         w_final = int(cam.get(cv2.CAP_PROP_FRAME_WIDTH))
         h_final = int(cam.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+    logging.info(f"Camera resolution set to {w_final}x{h_final}")
+
     def center_crop_func(frame: np.ndarray) -> np.ndarray:
         h_curr, w_curr = frame.shape[:2]
         h_target, w_target = IMAGE_SIZE
         if w_curr < w_target or h_curr < h_target:
-            print(
-                f"Warning: Frame {w_curr}x{h_curr} is too small for target {w_target}x{h_target}. Returning original frame."
-            )
+            # logging.warning(
+            #     f"Frame {w_curr}x{h_curr} is too small for target {w_target}x{h_target}. Returning original frame."
+            # )
             return frame
         start_x = (w_curr - w_target) // 2
         start_y = (h_curr - h_target) // 2
@@ -84,6 +98,80 @@ def setup_camera(
         return frame[start_y:end_y, start_x:end_x]
 
     return cam, center_crop_func
+
+
+def preprocess_frame(frame: np.ndarray):
+    """Does gamma correction, small blur and normalization. INPLACE"""
+    cv2.LUT(frame, lut_lift_shadows, frame)
+    cv2.GaussianBlur(frame, (3, 3), 2, frame)
+    cv2.normalize(frame, frame, 255, 0, cv2.NORM_MINMAX)
+
+    return frame
+
+
+def calculate_canny_diff(
+    bg: np.ndarray,
+    current: np.ndarray,
+    lut: np.ndarray,
+    th_low: float = 100.0,
+    th_high: float = 200.0,
+) -> np.ndarray:
+    diff = cv2.absdiff(current, bg)
+    diff = cv2.LUT(diff, lut)
+    cv2.normalize(diff, diff, 255, 0, cv2.NORM_MINMAX)
+
+    diff[diff < np.quantile(diff, 0.99)] = 0
+    cv2.dilate(diff, np.ones((3, 3)), diff)
+    canny_diff = cv2.Canny(diff, th_low, th_high)
+    return canny_diff
+
+
+def segment_dart(bg: np.ndarray, current: np.ndarray):
+    diff = cv2.absdiff(bg, current)
+    diff = cv2.GaussianBlur(diff, (3, 3), 0)
+    # cv2.normalize(diff, diff, 255, 0, cv2.NORM_MINMAX)
+    _, thresh = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    total_change = cv2.countNonZero(thresh)
+    if total_change == 0:
+        return 0.0, thresh
+    kernel = np.ones((5, 5), np.uint8)
+    eroded_img = cv2.erode(thresh, kernel, iterations=1)
+    surviving_change = cv2.countNonZero(eroded_img)
+    solidity_ratio = surviving_change / total_change
+
+    return solidity_ratio, thresh
+
+
+def get_frame(cam: cv2.VideoCapture, center_crop: Callable[[np.ndarray], np.ndarray]):
+    ret, frame = cam.read()
+    if not ret:
+        raise IOError("Cannot read frame...")
+    # curr_color = center_crop(frame)
+    curr_color = cv2.resize(frame, IMAGE_SIZE)
+    curr_gray = cv2.cvtColor(curr_color, cv2.COLOR_BGR2GRAY)
+    curr_gray = preprocess_frame(curr_gray)
+
+    return curr_gray, curr_color
+
+
+def fitline_on_dart(x: np.ndarray, y: np.ndarray):
+    points = np.column_stack((x, y)).astype(np.float32)
+    [vx], [vy], x0, y0 = cv2.fitLine(
+        points, distType=cv2.DIST_FAIR, param=0.2, reps=0.01, aeps=0.01
+    )
+    k = float(vy / vx)
+    d = float(y0[0] - k * x0[0])
+
+    yfit = k * x + d
+    return yfit
+
+
+def load_model(path: str):
+    pass
+
+
+def infer_model(model, input_data: np.ndarray):
+    pass
 
 
 if __name__ == "__main__":

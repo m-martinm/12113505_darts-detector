@@ -1,9 +1,17 @@
 from pathlib import Path
-from typing import List
+import time
+from typing import Callable, List
 import numpy as np
 import cv2
 import utils
 import matplotlib.pyplot as plt
+import logging
+from collections import deque
+
+logging.basicConfig(
+    format="[%(asctime)s] %(levelname)s: %(message)s", level=logging.DEBUG
+)
+WARP_SIZE = utils.IMAGE_SIZE
 
 
 def imgload(path: Path):
@@ -49,18 +57,9 @@ def do_sift(board_img: cv2.typing.MatLike, scene_img: cv2.typing.MatLike):
     return (H_board, H_scene)
 
 
-def calculate_luts(gamma: float = 0.7):
-    invGamma = 1.0 / gamma
-    lut_contrast = np.array(
-        [((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)], dtype=np.uint8
-    )
-
-    lut_lift_shadows = np.sqrt(np.arange(256, dtype=np.float32) * 255).astype(np.uint8)
-    return lut_contrast, lut_lift_shadows
-
 
 def load_board_reference(path: Path):
-    board_color, board_gray = imgload(board_path)
+    board_color, board_gray = imgload(path)
     board_mask = board_color[:, :, 3] != 0
 
     board_mask = cv2.GaussianBlur(
@@ -69,188 +68,144 @@ def load_board_reference(path: Path):
     cv2.threshold(board_mask, 0, 255, cv2.THRESH_BINARY, board_mask)
     board_color[~board_mask.astype(np.bool)] = (0, 0, 0, 0)
     board_gray[~board_mask.astype(np.bool)] = 0
-    cv2.LUT(board_gray, lut_lift_shadows, board_gray)
+    cv2.LUT(board_gray, utils.lut_lift_shadows, board_gray)
 
     return board_color, board_gray, board_mask
 
 
-def preprocess_frame(frame: np.ndarray):
-    """Does gamma correction, small blur and normalization. INPLACE"""
-    cv2.LUT(frame, lut_lift_shadows, frame)
-    cv2.GaussianBlur(frame, (3, 3), 2, frame)
-    cv2.normalize(frame, frame, 255, 0, cv2.NORM_MINMAX)
 
-    return frame
-
-
-def calculate_canny_diff(
-    bg: np.ndarray,
-    current: np.ndarray,
-    lut: np.ndarray,
-    th_low: float = 100.0,
-    th_high: float = 200.0,
-) -> np.ndarray:
-    diff = cv2.absdiff(current, bg)
-    diff = cv2.LUT(diff, lut)
-    cv2.normalize(diff, diff, 255, 0, cv2.NORM_MINMAX)
-
-    diff[diff < np.quantile(diff, 0.99)] = 0
-    cv2.dilate(diff, np.ones((3, 3)), diff)
-    canny_diff = cv2.Canny(diff, th_low, th_high)
-    return canny_diff
-
-def segment_dart(bg: np.ndarray, current: np.ndarray):
-    diff = cv2.absdiff(bg, current)
-    diff = cv2.GaussianBlur(diff, (3, 3), 0)
-    cv2.normalize(diff, diff, 255, 0, cv2.NORM_MINMAX)
-    _, thresh = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # utils.display_preview(thresh)
-
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, np.ones((5,5)))
-
-    return thresh
-
-def get_frame(cam: cv2.VideoCapture):
-    ret, frame = cam.read()
-    if not ret:
-        raise IOError("Coudln't read frame...")
-    pass
 
 if __name__ == "__main__":
-    lut_contrast, lut_lift_shadows = calculate_luts()
-
     root = Path(__file__).parent.parent.resolve()
-    # cal_dir = root / "data/calibration"
-    # dist = np.loadtxt(cal_dir / "dist.txt")
-    # mtx = np.loadtxt(cal_dir / "mtx.txt")
 
-    board_path = root / r"data\sift\bg_removed\board1.png"
+    board_path = root / r"data\sift\bg_removed\board3.png"
     board_color, board_gray, board_mask = load_board_reference(board_path)
-
-    # sequence_dir = root / "data/sequence/seq3"
-    # sequence = [imgload(k) for k in sequence_dir.glob("*.jpg")]
-
-    # bg_color, bg_gray = sequence.pop(0)
-    # preprocess_frame(bg_gray)
-    cam, center_crop = utils.setup_camera()
     
+    # cam, center_crop = utils.setup_camera(0, cv2.CAP_DSHOW)
+    cam, center_crop = utils.setup_camera(file=Path(r"G:\My Drive\IMG_1320.mov"))
     cv2.namedWindow("Dart")
-    cv2.displayOverlay("Dart", "PRESS SPACE TO START")
+    cv2.displayOverlay(
+        "Dart", "Position the camera and fix it\nPRESS SPACE TO CONTINUE"
+    )
     while 1:
-        try:
-            ret, frame = cam.read()
-            if not ret:
-                break
-            curr_color = center_crop(frame)
-
-        except IndexError:
-            break
+        curr_gray, curr_color = utils.get_frame(cam, center_crop)
         cv2.imshow("Dart", curr_color)
-        k = cv2.waitKey(10)
-        # print(ord(" "), ord("q"))
+        k = cv2.waitKey(30)
         if k & 0xFF == 32:
             break
         elif k & 0xFF in (27, 113):
             exit(0)
-    cv2.displayOverlay("Dart", "a", 10)
-    # print(cam.get(cv2.CAP_PROP_FRAME_WIDTH))
-    # print(cam.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    ret, frame = cam.read()
-    bg_color = center_crop(frame)
-    bg_gray = cv2.cvtColor(bg_color, cv2.COLOR_BGR2GRAY)
-    bg_gray = preprocess_frame(bg_gray)
-    
+
+    cv2.displayOverlay(
+        "Dart", "Position the camera and fix it\nPRESS SPACE TO CONTINOUE", 10
+    )
+    bg_gray, bg_color = utils.get_frame(cam, center_crop)
     H_board, H_scene = do_sift(board_gray, bg_gray)
-    # print(H_board)
-    # print(np.linalg.inv(H_board))
-    # print(H_scene)
-    H_inv = np.linalg.inv(H_board)
-    cam_is_left = H_scene[0, -1] < 0
-    cam_is_down = H_scene[1, -1] > 0
+    cam_is_left = H_scene[0, -1] > 0
 
-    h, w = board_gray.shape
-    board_corners = np.array(
-        [[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32
-    ).reshape(-1, 1, 2)
-    scene_corners = cv2.perspectiveTransform(board_corners, H_board).astype(np.int32)
+    bg_color = cv2.warpPerspective(bg_color, H_scene, WARP_SIZE)
+    bg_gray = cv2.warpPerspective(bg_gray, H_scene, WARP_SIZE)
+    bg_copy = bg_color.copy()
 
-    tmp = scene_corners[1,0,:] - scene_corners[0,0,:]
-    board_size_pixels = np.sqrt(tmp.dot(tmp))
-    pt1 = (0,0)
-    pt2 = (0,0)
-    # print(board_size_pixels)
-    # exit(0)
+    buffer_length = 5
+    buffer_cursor = 0
+    buffer = np.empty(shape=(buffer_length, 4), dtype=np.float32)
+    pt1 = (0, 0)
+    pt2 = (0, 0)
+    # sliding_window_size = 30
+    # sliding_window = deque([200.0 for _ in range(sliding_window_size)], maxlen=sliding_window_size)
     
     while 1:
-        try:
-            ret, frame = cam.read()
-            if not ret:
-                break
-            curr_color = center_crop(frame)
-            curr_gray = cv2.cvtColor(curr_color, cv2.COLOR_BGR2GRAY)
-            # curr_color, curr_gray = sequence.pop(0)
-            preprocess_frame(curr_gray)
-        except IndexError:
-            break
+        time_st = time.time_ns()
+        curr_gray, curr_color = utils.get_frame(cam, center_crop)
+        curr_color = cv2.warpPerspective(curr_color, H_scene, WARP_SIZE)
+        curr_gray = cv2.warpPerspective(curr_gray, H_scene, WARP_SIZE)
+        ratio, dart = utils.segment_dart(bg_gray, curr_gray)
+        # cv2.imshow("Segmentation", dart)
+        # current_mean_y_std = np.mean(np.array(sliding_window))
+        # current_std_y_std = np.std(np.array(sliding_window))
+        # y_std = np.argwhere(dart)[:,0].std().mean()
+        # logging.debug( f"{y_std:.3f}, {current_mean_y_std:.3f}, {current_std_y_std:.3f}")
         
         
-        dart = segment_dart(bg_gray, curr_gray)
-        if dart.mean() < 10:
-            cv2.waitKey(10)
-            ret, frame = cam.read()
-            if not ret:
-                break
-            curr_color = center_crop(frame)
-            curr_gray = cv2.cvtColor(curr_color, cv2.COLOR_BGR2GRAY)
-            preprocess_frame(curr_gray)
-
+        # if current_mean_y_std - 3 * current_std_y_std > y_std:
+        if ratio > 0.5:
+            cv2.imshow("Segmentation", dart)
+            cv2.displayOverlay("Segmentation", f"Ratio: {ratio:.3f}")
+            # cv2.displayOverlay("Segmentation", f"{dart.mean()=}")
+            logging.debug("Maybe dart")
             y, x = np.where(dart)
-            points = np.column_stack((x, y)).astype(np.float32)
-            [vx], [vy], x0, y0 = cv2.fitLine(
-                points, distType=cv2.DIST_FAIR, param=0.2, reps=0.01, aeps=0.01
-            )
-            k = float(vy / vx)
-            d = float(y0[0] - k * x0[0])
+            yfit = utils.fitline_on_dart(x, y)
 
-            yfit = k * x + d
             residuals = y - yfit
             sigma_residuals = np.std(residuals)
             outlier_mask = np.abs(residuals) > sigma_residuals * 2
-            if outlier_mask.mean() < 0.1:
-                xmin = int(x[~outlier_mask].min())
-                xmax = int(x[~outlier_mask].max())
 
-                pt1 = np.array((xmin, int(k * xmin + d)), dtype=np.int32)
-                pt2 = np.array((xmax, int(k * xmax + d)), dtype=np.int32)
-                length = pt2- pt1
-                length = np.sqrt(length.dot(length))
-                # print(length, board_size_pixels)
-                if length * 2 < board_size_pixels:
-                    cv2.line(curr_color, pt1, pt2, (0, 0, 255), 1)
-                    cv2.polylines(curr_color, [scene_corners], True, (0, 255, 255), 2)
-                
+            if outlier_mask.mean() < 0.2:  # 0.1 was
+                y = y[~outlier_mask]
+                x = x[~outlier_mask]
+                yfit = utils.fitline_on_dart(x, y)
+
+                residuals = y - yfit
+                sigma_residuals = np.std(residuals)
+                outlier_mask = np.abs(residuals) > sigma_residuals * 2
+
+                if outlier_mask.mean() < 0.1:
+                    xmin = x[~outlier_mask].min()
+                    xmax = x[~outlier_mask].max()
+                    buffer[buffer_cursor] = np.array(
+                        [[xmin, yfit[-1], xmax, yfit[0]]], dtype=np.float32
+                    )
+                    # frame_buffer[:,320*buffer_cursor:320*buffer_cursor + 320] = cv2.resize(curr_gray, (320, 320))
+                    buffer_cursor += 1
+                    logging.debug(f"Dart found {buffer_cursor=}")
+                else:
+                    buffer_cursor = 0
             else:
-                cv2.displayOverlay("Dart", "New round, no dart hit", 3000)
-                cv2.waitKey(3000)
+                logging.debug("Too many outliers, resetting buffer")
+                buffer_cursor = 0
+
         else:
+            buffer_cursor = 0
+            # sliding_window.append(y_std)
+
+        if buffer_cursor >= buffer_length - 1:
+            logging.debug("Buffer full, resetting buffer and checking it")
+            # cv2.imshow("Frame buffer", frame_buffer[:, 3*320:8*320])
+            buffer_cursor = 0
+            tmp = buffer[1:-1]  # discard last 2 and first 3
+
+            mean_of_std = np.mean(np.std(tmp, axis=0))
+            logging.debug(f"{mean_of_std=}")
+            if mean_of_std < 5.0:
+                pt1_x = int(tmp[:, 0].mean())
+                pt1_y = int(tmp[:, 1].mean())
+                pt2_x = int(tmp[:, 2].mean())
+                pt2_y = int(tmp[:, 3].mean())
+
+                pt1 = (pt1_x, pt1_y)
+                pt2 = (pt2_x, pt2_y)
+
+        if buffer_cursor == 0:
             cv2.line(curr_color, pt1, pt2, (0, 0, 255), 1)
-            cv2.polylines(curr_color, [scene_corners], True, (0, 255, 255), 2)
+            cv2.imshow("Dart", curr_color)
+            k = cv2.waitKey(10)
+            if k % 0xFF == 27:
+                break
+            elif k % 0xFF == 32:
+                tmp, _ = utils.get_frame(cam, center_crop)
+                H_board, H_scene = do_sift(board_gray, tmp)
+                cam_is_left = H_scene[0, -1] > 0
 
-        
-        cv2.imshow("Dart", curr_color)
-        k = cv2.waitKey(10)
-        if k % 0xFF == 27:
-            break
-        
-        bg_color = curr_color
-        bg_gray = curr_gray
+            bg_color = curr_color
+            bg_gray = curr_gray
 
-        # utils.display_preview(curr_color)
-        # if update_bg:
-        #     bg_color = curr_color
-        #     bg_gray = curr_gray
-            
-        # k = cv2.waitKey(5)
-        # if k & 256 == 27:
-        #     break
-
+        # frame_time = int((time.time_ns() - time_st) * 1e-6)
+        # if (dt := 40 - frame_time) > 0:
+        #     k = cv2.waitKey(dt)
+        #     if k % 0xFF == 27:
+        #         break
+        #     elif k % 0xFF == 32:
+        #         tmp, _ = utils.get_frame(cam, center_crop)
+        #         H_board, H_scene = do_sift(board_gray, tmp)
+        #         cam_is_left = H_scene[0, -1] > 0
