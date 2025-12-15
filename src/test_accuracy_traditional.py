@@ -1,12 +1,20 @@
 from pathlib import Path
 
 import cv2
+import numpy as np
 from traditional_pipeline import TraditionalDetector
 import argparse
-
+import timeit
 import utils
 
 WNAME = "Video"
+
+points = []
+
+def on_mouse_cb(event, x, y, flags, param):
+    if event == cv2.EVENT_LBUTTONDOWN:
+        points.append(np.array([x, y]))
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -19,11 +27,11 @@ if __name__ == "__main__":
     assert board_img is not None
 
     board_img = cv2.resize(board_img, utils.IMAGE_SIZE)
-    detector = TraditionalDetector(board_img)
+    detector = TraditionalDetector(board_img, buffer_length=3)
     lines = []
 
     for frame in utils.iter_video(video):
-        processed, line = detector.process_frame(frame)
+        processed, line = detector.process_frame(frame, 0.4)
         if line is not None:
             lines.append(line)
 
@@ -40,9 +48,19 @@ if __name__ == "__main__":
                 2,
                 cv2.LINE_AA,
             )
-            
+
         cv2.imshow(WNAME, processed)
 
         k = cv2.waitKey(1)
         if k & 0xFF == 27:
             break
+
+    cv2.setMouseCallback(WNAME, on_mouse_cb)
+    cv2.imshow(WNAME, processed)
+    cv2.waitKey(0)
+
+    print(detector.confirmed_hits)
+    print(points)
+    dists = np.linalg.norm(np.array(points) - np.array(detector.confirmed_hits), axis=1)
+    print(f"Found darts: {len(detector.confirmed_hits)}/3 ({len(detector.confirmed_hits)/3})")
+    print(f"Mean distance in pixels: {dists.mean()}")

@@ -9,24 +9,24 @@ import numpy as np
 
 IMAGE_SIZE = (640, 640)
 
-_cal_padding = 100
-_r = min(IMAGE_SIZE) / 2 - _cal_padding
-_cal_points = {
-    "D20_1": np.array([_r, np.deg2rad(90 - 9)]),
-    "D6_10": np.array([_r, np.deg2rad(360 - 9)]),
-    "D19_3": np.array([_r, np.deg2rad(270 - 9)]),
-    "D11_14": np.array([_r, np.deg2rad(180 - 9)]),
+_CAL_PADDING = 100
+_R = min(IMAGE_SIZE) / 2 - _CAL_PADDING
+_CAL_POINTS = {
+    "D20_1": np.array([_R, np.deg2rad(90 - 9)]),
+    "D6_10": np.array([_R, np.deg2rad(360 - 9)]),
+    "D19_3": np.array([_R, np.deg2rad(270 - 9)]),
+    "D11_14": np.array([_R, np.deg2rad(180 - 9)]),
 }
-MAX_R = IMAGE_SIZE[0] / 2  # 320 pixels
-INNER_BULL_RADIUS = 0.02 * MAX_R  # approx. 6.4 px (50 points)
-OUTER_BULL_RADIUS = 0.04 * MAX_R  # approx. 12.8 px (25 points)
-TRIPLE_INNER_RADIUS = 0.58 * MAX_R  # approx. 185.6 px
-TRIPLE_OUTER_RADIUS = 0.61 * MAX_R  # approx. 195.2 px
-DOUBLE_INNER_RADIUS = 0.95 * MAX_R  # approx. 304.0 px
-DOUBLE_OUTER_RADIUS = 0.98 * MAX_R  # approx. 313.6 px
 
-for k, v in _cal_points.items():
-    _cal_points[k] = np.array(  # type: ignore
+OUTER_BULL_RADIUS = _R * 16 / 170
+INNER_BULL_RADIUS = _R * (12.7 / 2) / 170
+TRIPLE_OUTER_RADIUS = _R * 107 / 170
+TRIPLE_INNER_RADIUS = _R * (107 / 170 - 8 / 170)
+DOUBLE_INNER_RADIUS = _R * (1 - 8 / 170)
+DOUBLE_OUTER_RADIUS = _R
+
+for k, v in _CAL_POINTS.items():
+    _CAL_POINTS[k] = np.array(  # type: ignore
         [
             IMAGE_SIZE[0] / 2 + (v[0] * np.cos(v[1])),
             IMAGE_SIZE[1] / 2 - (v[0] * np.sin(v[1])),
@@ -59,7 +59,7 @@ def display_preview(
 
 
 def get_calibration_points() -> Dict[str, np.ndarray]:
-    return _cal_points
+    return _CAL_POINTS
 
 
 def load_video(file: Path):
@@ -170,9 +170,8 @@ def fit_line(
 
 
 def score_dart(p: np.ndarray):
-    CENTER = np.array([MAX_R, MAX_R])
-    dx = p[0] - CENTER[0]
-    dy = CENTER[1] - p[1]
+    dx = p[0] - IMAGE_SIZE[0] / 2
+    dy = IMAGE_SIZE[1] / 2 - p[1]
 
     radius = np.sqrt(dx**2 + dy**2)
     angle = np.degrees(np.arctan2(dy, dx))
@@ -182,9 +181,9 @@ def score_dart(p: np.ndarray):
 
     multiplier = 1
     if radius <= INNER_BULL_RADIUS:
-        return 50  # Bullseye
+        return 50
     elif radius <= OUTER_BULL_RADIUS:
-        return 25  # Outer Bull (25)
+        return 25
     elif radius >= DOUBLE_INNER_RADIUS:
         multiplier = 2
     elif radius >= TRIPLE_INNER_RADIUS and radius <= TRIPLE_OUTER_RADIUS:
@@ -195,8 +194,6 @@ def score_dart(p: np.ndarray):
     )
     segments = segments[::-1]
     adjusted_angle = angle - 90
-    if adjusted_angle < 0:
-        adjusted_angle += 360
 
     segment_index = int((adjusted_angle - 9 + 360) % 360 // 18)
     base_score = segments[segment_index]

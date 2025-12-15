@@ -100,7 +100,6 @@ class TraditionalDetector:
 
         if ratio > threshold:
             dart[self.dart_mask] = 0
-            cv2.imshow("aa", dart)
 
             y, x = np.where(dart)
 
