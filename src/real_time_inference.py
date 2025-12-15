@@ -84,6 +84,7 @@ if __name__ == "__main__":
         ret, curr_color = cam.read()
         if not ret:
             break
+        print(curr_color.shape)
         curr_color = cv2.resize(curr_color, (640, 640))
         res = model.predict(curr_color, verbose=False)[0]
 
